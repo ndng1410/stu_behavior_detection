@@ -61,33 +61,33 @@ class fz_list_student(Base):
     major_id = Column(Integer, index=True)
     campus_code = Column(VARCHAR, index=True)
 
-class sub1(Base):
-    __tablename__ = 'total_activity'
-    id = Column(BigInteger, primary_key=True)
-    term_name = Column(VARCHAR(200), nullable=False, index=True)
-    term_id = Column(Integer, nullable=False, index=True)
-    member_login = Column(VARCHAR(200), nullable=False, index=True)
-    member_code = Column(VARCHAR(200), nullable=False, index=True)
-    total_act = Column(Integer, nullable=False, index=True)
-    group_id = Column(Integer, nullable=False, index=True)
+# class sub1(Base):
+#     __tablename__ = 'total_activity'
+#     id = Column(BigInteger, primary_key=True)
+#     term_name = Column(VARCHAR(200), nullable=False, index=True)
+#     term_id = Column(Integer, nullable=False, index=True)
+#     member_login = Column(VARCHAR(200), nullable=False, index=True)
+#     member_code = Column(VARCHAR(200), nullable=False, index=True)
+#     total_act = Column(Integer, nullable=False, index=True)
+#     group_id = Column(Integer, nullable=False, index=True)
 
-class sub2(Base):
-    __tablename__ = 'total_attendance'
-    id = Column(BigInteger, primary_key=True)
-    attendance_total = Column(Integer, nullable=False, index=True)
-    term_name = Column(VARCHAR(200), nullable=False, index=True)
-    term_id = Column(Integer, nullable=False, index=True)
-    user_login = Column(VARCHAR(200), nullable=False, index=True)
-    user_code = Column(VARCHAR(200), nullable=False, index=True)
+# class sub2(Base):
+#     __tablename__ = 'total_attendance'
+#     id = Column(BigInteger, primary_key=True)
+#     attendance_total = Column(Integer, nullable=False, index=True)
+#     term_name = Column(VARCHAR(200), nullable=False, index=True)
+#     term_id = Column(Integer, nullable=False, index=True)
+#     user_login = Column(VARCHAR(200), nullable=False, index=True)
+#     user_code = Column(VARCHAR(200), nullable=False, index=True)
 
-class sub3(Base):
-    __tablename__ = 'total_user_semester'
-    id = Column(BigInteger, primary_key=True)
-    user_login = Column(VARCHAR(200), nullable=False, index=True)
-    user_code = Column(VARCHAR(200), nullable=False, index=True)
-    semester = Column(Integer, nullable=False, index=True)
-    term_id = Column(Integer, nullable=False, index=True)
-    group_id = Column(Integer, nullable=False, index=True)
+# class sub3(Base):
+#     __tablename__ = 'total_user_semester'
+#     id = Column(BigInteger, primary_key=True)
+#     user_login = Column(VARCHAR(200), nullable=False, index=True)
+#     user_code = Column(VARCHAR(200), nullable=False, index=True)
+#     semester = Column(Integer, nullable=False, index=True)
+#     term_id = Column(Integer, nullable=False, index=True)
+#     group_id = Column(Integer, nullable=False, index=True)
 
 class t7_course_result(Base):
     __tablename__ = 't7_course_result'
@@ -172,20 +172,20 @@ async def total_attendance(engine, partitioner, mod_number):
     
 async def check_user_semester(engine, partitioner, mod_number):
     q1 = select(t7_course_result.groupid, t7_course_result.student_login,
-                t7_course_result.term_id,
+                t7_course_result.term_id, t7_course_result.psubject_code,
                 case((~mapping_term.ph.is_(None), mapping_term.ho_term_id), else_=t7_course_result.term_id).label('fz_term'))\
         .join(mapping_term, t7_course_result.term_id == mapping_term.ph, isouter=True)\
         .where(t7_course_result.term_id >= 24)\
         .subquery()
     
-    q2 = select(q1.c.groupid, q1.c.student_login, 
-                q1.c.term_id, q1.c.fz_term, fu_user.user_code, fu_user.id)\
+    q2 = select(q1.c.groupid, q1.c.student_login, fu_user.user_code, 
+                q1.c.term_id, q1.c.psubject_code, q1.c.fz_term)\
         .join_from(q1, fu_user, q1.c.student_login == fu_user.user_login)\
         .subquery()
 
-    q = select(q2.c.student_login, q2.c.user_code, 
-               fz_list_student.semester, fz_list_student.term_id,
-               q2.c.groupid)\
+    q = select(q2.c.groupid, q2.c.student_login, q2.c.user_code, 
+               q2.c.psubject_code, fz_list_student.term_id,
+               fz_list_student.semester)\
         .join_from(fz_list_student, q2, and_(q2.c.fz_term == fz_list_student.term_id,
                                              q2.c.user_code == fz_list_student.student_code))\
         .where(
@@ -211,7 +211,7 @@ async def check_user_semester(engine, partitioner, mod_number):
                    select(fz_list_student.student_code).where(or_(fz_list_student.term_id < 26,
                                                                   fz_list_student.term_id == 54))
                ),
-               q2.c.id % 13 == mod_number)
+               q2.c.groupid % 13 == mod_number)
     async with engine.connect() as conn:
         result = await conn.execute(q)
         res = result.all()
@@ -290,7 +290,7 @@ async def avg_grade(engine, partitioner, mod_number, semester_range):
                ~fz_list_student.student_code.in_(
                    select(fz_list_student.student_code).where(or_(fz_list_student.term_id < 26,
                                                                   fz_list_student.term_id == 54))
-               ))\
+               ), q2.c.val == 1)\
         .group_by(fz_list_student.student_code)
     async with engine.connect() as conn:
         result = await conn.execute(q)
@@ -419,7 +419,7 @@ async def avg_grade_by_subject(engine, partitioner, mod_number, semester_range):
                ~fz_list_student.student_code.in_(
                    select(fz_list_student.student_code).where(or_(fz_list_student.term_id < 26,
                                                                   fz_list_student.term_id == 54))
-               ))\
+               ), q2.c.val == 1)\
         .group_by(fz_list_student.student_code, func.substr(q2.c.psubject_code, 1, 3))
     async with engine.connect() as conn:
         result = await conn.execute(q)
@@ -589,6 +589,253 @@ async def subject_list(engine, partitioner, mod_number):
         result = await conn.execute(q)
         res = result.all()
         return res
+    
+async def avg_grade_by_skill_code(engine, partitioner, mod_number, semester_range):
+    q1 = select(t7_course_result.groupid, t7_course_result.student_login,
+                t7_course_result.term_id, t7_course_result.val,
+                t7_course_result.grade, t7_course_result.number_of_credit,
+                t7_course_result.psubject_code, t7_course_result.skill_code,
+                case((~mapping_term.ph.is_(None), mapping_term.ho_term_id), else_=t7_course_result.term_id).label('fz_term'))\
+        .join(mapping_term, t7_course_result.term_id == mapping_term.ph, isouter=True)\
+        .where(t7_course_result.term_id >= 24)\
+        .subquery()
+    
+    q2 = select(q1.c.groupid, q1.c.student_login, fu_user.user_code,
+                q1.c.term_id, q1.c.val, q1.c.grade, q1.c.number_of_credit,
+                q1.c.psubject_code, q1.c.fz_term, fu_user.id, fu_subject.skill_code,
+                fu_subject.subject_code)\
+        .join_from(q1, fu_user, q1.c.student_login == fu_user.user_login)\
+        .join_from(q1, fu_subject, q1.c.psubject_code == fu_subject.subject_code)\
+        .subquery()
+
+    q = select(q2.c.groupid, q2.c.student_login, fz_list_student.student_code, q2.c.term_id, fz_list_student.semester, 
+               fz_list_student.major_id, fz_list_student.campus_code, q2.c.val, q2.c.skill_code, q2.c.subject_code,
+               func.sum(q2.c.grade * q2.c.number_of_credit), func.sum(q2.c.number_of_credit))\
+        .join_from(fz_list_student, q2, and_(q2.c.fz_term == fz_list_student.term_id,
+                                             q2.c.user_code == fz_list_student.student_code))\
+        .where(
+               fz_list_student.semester < 3, 
+               fz_list_student.student_code.in_(
+                   select(fz_list_student.student_code)\
+                    .where(fz_list_student.major_id.in_([1, 3, 6, 12, 13, 14, 15, 16, 17,
+                                                        28, 29, 30, 31, 32, 33, 34, 35, 
+                                                        50, 51, 52, 53, 54, 71, 72]),
+                            fz_list_student.campus_code == 'ph',
+                            fz_list_student.semester.in_([0, 1, 2]))\
+                    .group_by(fz_list_student.student_code)\
+                    .having(func.max(fz_list_student.semester) == 2, func.count(distinct(fz_list_student.semester)) >= 2)
+               ),
+               ~fz_list_student.student_code.in_(
+                   select(fz_list_student.student_code).where(fz_list_student.campus_code != 'ph')
+               ),
+               ~fz_list_student.student_code.in_(
+                   select(fz_list_student.student_code).where(and_(fz_list_student.semester.in_([0, 1, 2]),
+                                                                   fz_list_student.status == 'THO'))
+               ),
+               ~fz_list_student.student_code.in_(
+                   select(fz_list_student.student_code).where(or_(fz_list_student.term_id < 26,
+                                                                  fz_list_student.term_id == 54))
+               ), q2.c.val == 1)\
+        .group_by(fz_list_student.student_code, q2.c.skill_code, q2.c.subject_code, q2.c.groupid)
+    async with engine.connect() as conn:
+        result = await conn.execute(q)
+        res = result.all()
+        return res
+
+async def total_attendance_prefix(engine, partitioner, mod_number):
+    q1 = select(fu_group.id, fu_group.pterm_id)\
+        .where(fu_group.pterm_id >= 24, fu_group.is_virtual == 0)\
+        .subquery()
+    
+    q = select(func.count(fu_attendance.activity_id).label('total_att'),
+                fu_attendance.user_login, fu_user.user_code, 
+                fu_attendance.groupid)\
+        .join_from(fu_attendance, q1, fu_attendance.groupid == q1.c.id)\
+        .join_from(fu_attendance, fu_user, fu_attendance.user_login == fu_user.user_login)\
+        .where(fu_attendance.val == 1, fu_attendance.groupid % 17 == mod_number)\
+        .group_by(fu_attendance.user_login, fu_attendance.groupid)
+    async with engine.connect() as conn:
+        result = await conn.execute(q)
+        res = result.all()
+        return res
+
+async def total_activity_prefix(engine, partitioner, mod_number):
+    q = select(fu_group.id, func.count(fu_activity.id).label('total_act'))\
+        .join_from(fu_activity, fu_group, fu_activity.groupid == fu_group.id)\
+        .where(fu_group.pterm_id >= 24, fu_group.is_virtual == 0, fu_activity.course_slot < 100,
+               fu_activity.groupid % 17 == mod_number)\
+        .group_by(fu_group.id)
+    async with engine.connect() as conn:
+        result = await conn.execute(q)
+        res = result.all()
+        return res
+
+async def insert_temp_table():
+    PARTITIONER = 19
+
+    engine = create_async_engine('mysql+aiomysql://root@localhost/db_test', pool_size=10, max_overflow=20)
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    total_mod_numbers = list(range(PARTITIONER))
+
+    for index, mod_numbers in enumerate(batched(total_mod_numbers, n=20)):
+        tasks1 = [total_activity(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+        res1 = await asyncio.gather(*tasks1)
+
+        tasks2 = [total_attendance(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+        res2 = await asyncio.gather(*tasks2)
+
+        tasks3 = [check_user_semester(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+        res3 = await asyncio.gather(*tasks3)
+
+        rows1 = []
+        rows2 = []
+        rows3 = []
+
+        for i in res1:
+            for j in i:
+                rows1.append(dict(term_id=j[0], member_login=j[1], member_code=j[2],
+                            total_act=j[3], term_name=j[4], group_id=j[5]))
+        for i in res2:
+            for j in i:
+                rows2.append(dict(attendance_total=j[0], user_login=j[1], user_code=j[2],
+                            term_id=j[3], term_name=j[4]))
+        for i in res3:
+            for j in i:
+                rows3.append(dict(user_login=j[0], user_code=j[1], semester=j[2],
+                            term_id=j[3], group_id=j[4]))
+                
+        async with engine.connect() as conn:
+            await conn.execute(insert(sub1), rows1)
+            await conn.execute(insert(sub2), rows2)
+            await conn.execute(insert(sub3), rows3)
+            await conn.commit()
+
+    # Clean async engine       
+    await engine.dispose()
+
+async def handle_attendance_percentage():
+    PARTITIONER = 19
+
+    engine = create_async_engine(
+        "mysql+aiomysql://root@localhost/db_test", pool_size=10, max_overflow=20
+    )
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    total_mod_numbers = list(range(PARTITIONER))
+
+    async with engine.connect() as conn:
+        dfs = []
+        for index, mod_numbers in enumerate(batched(total_mod_numbers, n=20)):
+            m_data = [total_activity(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+            data = await asyncio.gather(*m_data)
+            for item in data:
+                df = pd.DataFrame(item, columns=['pterm_id', 'user_login', 'user_code',
+                                                 'total_act', 'pterm_name', 'group_id'])
+                dfs.append(df)
+        df_total_activity = pd.concat(dfs, ignore_index=True)
+
+        dfs = []
+        for index, mod_numbers in enumerate(batched(total_mod_numbers, n=20)):
+            m_data = [total_attendance(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+            data = await asyncio.gather(*m_data)
+            for item in data:
+                df = pd.DataFrame(item, columns=['total_att', 'user_login', 'user_code',
+                                                 'pterm_id', 'pterm_name'])
+                dfs.append(df)
+        df_total_attendance = pd.concat(dfs, ignore_index=True)
+
+        dfs = []
+        for index, mod_numbers in enumerate(batched(total_mod_numbers, n=20)):
+            m_data = [check_user_semester(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+            data = await asyncio.gather(*m_data)
+            for item in data:
+                df = pd.DataFrame(item, columns=['group_id', 'user_login', 'user_code',
+                                                 'subject_code', 'pterm_id', 'semester'])
+                dfs.append(df)
+        df_user_semester = pd.concat(dfs, ignore_index=True)
+
+        merged_df = pd.merge(df_total_activity, df_total_attendance,
+                             on=['pterm_id', 'user_code'], how='inner')
+        merged_df = pd.merge(merged_df, df_user_semester,
+                             on=['group_id', 'user_code'], how='inner')
+
+        calculate_df = merged_df.groupby(['user_login', 'user_code']).agg({
+            'total_att': 'sum',
+            'total_act': 'sum',
+            'semester': 'max'
+        })
+        calculate_df['percentage'] = calculate_df['total_att'] / calculate_df['total_act']
+        calculate_df.reset_index(inplace=True)
+
+    await engine.dispose()
+    return calculate_df
+
+async def handle_attendance_percentage_prefix():
+    PARTITIONER = 19
+
+    engine = create_async_engine(
+        "mysql+aiomysql://root@localhost/db_test", pool_size=10, max_overflow=20
+    )
+
+    async with engine.begin() as connection:
+        await connection.run_sync(Base.metadata.create_all)
+
+    total_mod_numbers = list(range(PARTITIONER))
+
+    async with engine.connect() as conn:
+        dfs = []
+        for index, mod_numbers in enumerate(batched(total_mod_numbers, n=20)):
+            m_data = [total_activity_prefix(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+            data = await asyncio.gather(*m_data)
+            for item in data:
+                df = pd.DataFrame(item, columns=['group_id', 'total_act'])
+                dfs.append(df)
+        df_total_activity = pd.concat(dfs, ignore_index=True)
+
+        dfs = []
+        for index, mod_numbers in enumerate(batched(total_mod_numbers, n=20)):
+            m_data = [total_attendance_prefix(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+            data = await asyncio.gather(*m_data)
+            for item in data:
+                df = pd.DataFrame(item, columns=['total_att', 'user_login', 
+                                                 'user_code', 'group_id'])
+                dfs.append(df)
+        df_total_attendance = pd.concat(dfs, ignore_index=True)
+
+        dfs = []
+        for index, mod_numbers in enumerate(batched(total_mod_numbers, n=20)):
+            m_data = [check_user_semester(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+            data = await asyncio.gather(*m_data)
+            for item in data:
+                df = pd.DataFrame(item, columns=['group_id', 'user_login', 'user_code',
+                                                 'psubject_code', 'pterm_id', 'semester'])
+                dfs.append(df)
+        df_user_semester = pd.concat(dfs, ignore_index=True)
+
+        merged_df = pd.merge(df_total_attendance, df_total_activity,
+                             on=['group_id'], how='inner')
+        merged_df = pd.merge(merged_df, df_user_semester,
+                             on=['group_id', 'user_code'], how='inner')
+        merged_df = merged_df[merged_df['user_login_x'] == merged_df['user_login_y']]
+        merged_df.drop(columns=['user_login_y'], inplace=True)
+        merged_df.rename(columns={'user_login_x': 'user_login'}, inplace=True)
+        merged_df['subject_code'] = merged_df['psubject_code'].apply(lambda x: x[:3])
+
+        calculate_df = merged_df.groupby(['user_login', 'user_code', 'subject_code']).agg({
+            'total_att': 'sum',
+            'total_act': 'sum',
+            'semester': 'max'
+        })
+        calculate_df['percentage'] = (calculate_df['total_att'] / calculate_df['total_act']).round(2)
+        calculate_df.reset_index(inplace=True)
+
+    await engine.dispose()
+    return calculate_df
 
 async def main():
     PARTITIONER = 19
@@ -599,39 +846,6 @@ async def main():
         await connection.run_sync(Base.metadata.create_all)
 
     total_mod_numbers = list(range(PARTITIONER))
-
-    # for index, mod_numbers in enumerate(batched(total_mod_numbers, n=20)):
-    #     tasks1 = [total_activity(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
-    #     res1 = await asyncio.gather(*tasks1)
-
-    #     tasks2 = [total_attendance(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
-    #     res2 = await asyncio.gather(*tasks2)
-
-        # tasks3 = [check_user_semester(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
-        # res3 = await asyncio.gather(*tasks3)
-
-    #     rows1 = []
-    #     rows2 = []
-        # rows3 = []
-
-    #     for i in res1:
-    #         for j in i:
-    #             rows1.append(dict(term_id=j[0], member_login=j[1], member_code=j[2],
-    #                         total_act=j[3], term_name=j[4], group_id=j[5]))
-    #     for i in res2:
-    #         for j in i:
-    #             rows2.append(dict(attendance_total=j[0], user_login=j[1], user_code=j[2],
-    #                         term_id=j[3], term_name=j[4]))
-        # for i in res3:
-        #     for j in i:
-        #         rows3.append(dict(user_login=j[0], user_code=j[1], semester=j[2],
-        #                     term_id=j[3], group_id=j[4]))
-                
-        # async with engine.connect() as conn:
-    #         await conn.execute(insert(sub1), rows1)
-    #         await conn.execute(insert(sub2), rows2)
-            # await conn.execute(insert(sub3), rows3)
-            # await conn.commit()
 
     # for index, mod_numbers in enumerate(batched(total_mod_numbers, n=20)):
     #     tasks3 = [check_user_semester(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
@@ -673,57 +887,29 @@ async def main():
     #     res = await asyncio.gather(*tasks)
     #     return res
     
-    for index, mod_numbers in enumerate(batched(total_mod_numbers, n=1)):
-        tasks = [fail_count_by_prefix(engine, PARTITIONER, mod_number, [0, 1, 2, 3]) for mod_number in mod_numbers]
-        res = await asyncio.gather(*tasks)
-        return res
+    # for index, mod_numbers in enumerate(batched(total_mod_numbers, n=1)):
+    #     tasks = [fail_count_by_prefix(engine, PARTITIONER, mod_number, [0, 1, 2, 3]) for mod_number in mod_numbers]
+    #     res = await asyncio.gather(*tasks)
+    #     return res
+
+    # for index, mod_numbers in enumerate(batched(total_mod_numbers, n=1)):
+    #     tasks = [attendance_by_prefix(engine, PARTITIONER, mod_number, [0, 1, 2, 3]) for mod_number in mod_numbers]
+    #     res = await asyncio.gather(*tasks)
+    #     return res
 
     # Clean async engine       
     await engine.dispose()
     
 if __name__ == '__main__':
     start_time = time()
-    res = asyncio.run(main())
-    with open('test.csv', 'w', newline='', encoding="utf-8") as csv_file:
-        csv_writer = csv.writer(csv_file)
-    #     csv_writer.writerow(["Student_Code", "Status", "Semester",
-    #                          "Major_ID", "Campus_Code", "Term_ID"])
-        # csv_writer.writerow(["Term", "User_Login", "User_Code", "Total_Attendance", "Total_Activity", "Percentage", "Up_To_Semester"])
-        # csv_writer.writerow(["User_Login", "User_Code", "Up_To_Semester", "Term_ID", "Major_ID", "Campus",
-        #                      "Value", "Total_Grade", "Total_Credit", "Average_Grade"])
-        # csv_writer.writerow(["Term_ID", "User_Login", 
-        # "Fail_ACC", "Avg_ACC", "Fail_AND", "Avg_AND", "Fail_ASI", "Avg_ASI", "Fail_AUT", "Avg_AUT", 
-        # "Fail_BUS", "Avg_BUS", "Fail_CDI", "Avg_CDI", "Fail_CHE", "Avg_CHE", "Fail_COM", "Avg_COM", 
-        # "Fail_CRO", "Avg_CRO", "Fail_DAT", "Avg_DAT", "Fail_DOM", "Avg_DOM", "Fail_EHO", "Avg_EHO", 
-        # "Fail_ENG", "Avg_ENG", "Fail_ENT", "Avg_ENT", "Fail_ETO", "Avg_ETO", "Fail_FIN", "Avg_FIN", 
-        # "Fail_GAM", "Avg_GAM", "Fail_GRE", "Avg_GRE", "Fail_HIS", "Avg_HIS", "Fail_HOS", "Avg_HOS", 
-        # "Fail_HUR", "Avg_HUR", "Fail_INE", "Avg_INE", "Fail_INF", "Avg_INF", "Fail_IOT", "Avg_IOT", 
-        # "Fail_ITI", "Avg_ITI", "Fail_KBA", "Avg_KBA", "Fail_KBS", "Avg_KBS", "Fail_KOT", "Avg_KOT", 
-        # "Fail_LOG", "Avg_LOG", "Fail_MAN", "Avg_MAN", "Fail_MAR", "Avg_MAR", "Fail_MAT", "Avg_MAT", 
-        # "Fail_MBS", "Avg_MBS", "Fail_MEC", "Avg_MEC", "Fail_MOB", "Avg_MOB", "Fail_MUL", "Avg_MUL", 
-        # "Fail_NET", "Avg_NET", "Fail_PDP", "Avg_PDP", "Fail_PHY", "Avg_PHY", "Fail_PMA", "Avg_PMA", 
-        # "Fail_PR0", "Avg_PR0", "Fail_PRE", "Avg_PRE", "Fail_PRO", "Avg_PRO", "Fail_PSY", "Avg_PSY", 
-        # "Fail_SKI", "Avg_SKI", "Fail_SOA", "Avg_SOA", "Fail_SOF", "Avg_SOF", "Fail_SUP", "Avg_SUP", 
-        # "Fail_SYB", "Avg_SYB", "Fail_TES", "Avg_TES", "Fail_TOU", "Avg_TOU", "Fail_VIE", "Avg_VIE", 
-        # "Fail_WEB", "Avg_WEB","Up_To_Semester", "Total_Semester"])
-        # csv_writer.writerow(["Member_Login", "User_Code", "Value", "Subject_Code", "Skill_Code",
-        #                      "Semester", "Number_Of_Credit", "Average_Grade", "Number_Of_Attempt"])
-        # csv_writer.writerow(["ID", "Subject_Name", "Subject_Code", "Skill_Code", "Number_Of_Credit"])
-        # csv_writer.writerow(["Student_Code", "Status", "Semester", "Term_ID", "Major_ID", "Campus_Code",
-        #                      "Value", "Average_Grade", "Subject_Code"])
-        # csv_writer.writerow(["Student_Code", "Status", "Up_To_Semester", "Campus_Code",
-        #                      "Value", "Total_Grade", "Total_Credit", "Average_Grade"])
-        # csv_writer.writerow(["User_Login", "User_Code", "Term_ID", "Major_ID", "Campus",
-        #                      "Value", "Average_Grade", "Prefix_Subject"])
-        # csv_writer.writerow(["User_Login", "User_Code", "Semester", "Term_ID",
-        #                      "Majod_ID", "Campus", "Value", "Group_ID",
-        #                      "Subject_Code", "Type"])
-        # csv_writer.writerow(["User_Login", "User_Code", "Up_To_Semester", "Term_ID",
-        #                      "Major_ID", "Campus", "Total_Fail"])
-        csv_writer.writerow(["User_Login", "User_Code", "Term_ID",
-                             "Major_ID", "Campus", "Total_Fail", "Subject"])
-        process_data(res, csv_writer)
-    
+    res = asyncio.run(handle_attendance_percentage_prefix())
+    res.to_csv('df.csv', sep=',', index=False, encoding='utf-8')
+    # with open('test.csv', 'w', newline='', encoding="utf-8") as csv_file:
+    #     csv_writer = csv.writer(csv_file)
+
+    #     process_data(res, csv_writer)
+    print(f"Time taken: {time() - start_time}")
+
     """
     drop subject that has all null value of less than 5% total
 
@@ -744,14 +930,3 @@ if __name__ == '__main__':
 
     df.to_csv('pandas.csv', sep=',', index=False, encoding='utf-8')
     """
-
-    # df = pd.read_csv('test.csv')
-    # df["Type"] = df["Type"].fillna(3).astype(int)
-    # print(df.dtypes)
-    # df.to_csv('after.csv', sep=',', index=False, encoding='utf-8')
-
-    # df = pd.read_csv('fail_count_by_prefix.csv')
-    # count_fail = df.groupby("Subject").size()
-    # print(count_fail)
-
-    print(f"Time taken: {time() - start_time}")
