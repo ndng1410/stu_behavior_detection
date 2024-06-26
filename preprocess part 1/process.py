@@ -1,4 +1,4 @@
-from sqlalchemy import text, select, insert, and_, distinct, case, or_, func, Column, Integer, BigInteger, SmallInteger, VARCHAR, NVARCHAR, DECIMAL
+from sqlalchemy import tuple_, text, select, insert, and_, distinct, case, or_, func, Column, Integer, BigInteger, SmallInteger, VARCHAR, NVARCHAR, DECIMAL
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.sql.expression import cast
@@ -60,34 +60,6 @@ class fz_list_student(Base):
     status = Column(VARCHAR, index=True)
     major_id = Column(Integer, index=True)
     campus_code = Column(VARCHAR, index=True)
-
-# class sub1(Base):
-#     __tablename__ = 'total_activity'
-#     id = Column(BigInteger, primary_key=True)
-#     term_name = Column(VARCHAR(200), nullable=False, index=True)
-#     term_id = Column(Integer, nullable=False, index=True)
-#     member_login = Column(VARCHAR(200), nullable=False, index=True)
-#     member_code = Column(VARCHAR(200), nullable=False, index=True)
-#     total_act = Column(Integer, nullable=False, index=True)
-#     group_id = Column(Integer, nullable=False, index=True)
-
-# class sub2(Base):
-#     __tablename__ = 'total_attendance'
-#     id = Column(BigInteger, primary_key=True)
-#     attendance_total = Column(Integer, nullable=False, index=True)
-#     term_name = Column(VARCHAR(200), nullable=False, index=True)
-#     term_id = Column(Integer, nullable=False, index=True)
-#     user_login = Column(VARCHAR(200), nullable=False, index=True)
-#     user_code = Column(VARCHAR(200), nullable=False, index=True)
-
-# class sub3(Base):
-#     __tablename__ = 'total_user_semester'
-#     id = Column(BigInteger, primary_key=True)
-#     user_login = Column(VARCHAR(200), nullable=False, index=True)
-#     user_code = Column(VARCHAR(200), nullable=False, index=True)
-#     semester = Column(Integer, nullable=False, index=True)
-#     term_id = Column(Integer, nullable=False, index=True)
-#     group_id = Column(Integer, nullable=False, index=True)
 
 class t7_course_result(Base):
     __tablename__ = 't7_course_result'
@@ -497,7 +469,8 @@ async def fail_count(engine, partitioner, mod_number, semester_range):
 
     q = select(q2.c.student_login, fz_list_student.student_code, 
                func.max(fz_list_student.semester), q2.c.term_id, fz_list_student.major_id,
-               fz_list_student.campus_code, func.count(q2.c.val))\
+               fz_list_student.campus_code, 
+               func.sum(case((q2.c.val != 1, 1), else_=0)))\
         .join_from(fz_list_student, q2, and_(q2.c.fz_term == fz_list_student.term_id,
                                              q2.c.user_code == fz_list_student.student_code))\
         .where(
@@ -522,7 +495,7 @@ async def fail_count(engine, partitioner, mod_number, semester_range):
                ~fz_list_student.student_code.in_(
                    select(fz_list_student.student_code).where(or_(fz_list_student.term_id < 26,
                                                                   fz_list_student.term_id == 54))
-               ), q2.c.val != 1)\
+               ))\
         .group_by(fz_list_student.student_code)
     async with engine.connect() as conn:
         result = await conn.execute(q)
@@ -590,12 +563,13 @@ async def subject_list(engine, partitioner, mod_number):
         res = result.all()
         return res
     
-async def avg_grade_by_skill_code(engine, partitioner, mod_number, semester_range):
+async def avg_grade_by_skill_code(engine, partitioner, mod_number):
     q1 = select(t7_course_result.groupid, t7_course_result.student_login,
                 t7_course_result.term_id, t7_course_result.val,
                 t7_course_result.grade, t7_course_result.number_of_credit,
                 t7_course_result.psubject_code, t7_course_result.skill_code,
-                case((~mapping_term.ph.is_(None), mapping_term.ho_term_id), else_=t7_course_result.term_id).label('fz_term'))\
+                # case((~mapping_term.ph.is_(None), mapping_term.ho_term_id), else_=t7_course_result.term_id).label('fz_term'))
+                func.coalesce(mapping_term.ho_term_id, t7_course_result.term_id).label('fz_term'))\
         .join(mapping_term, t7_course_result.term_id == mapping_term.ph, isouter=True)\
         .where(t7_course_result.term_id >= 24)\
         .subquery()
@@ -607,36 +581,42 @@ async def avg_grade_by_skill_code(engine, partitioner, mod_number, semester_rang
         .join_from(q1, fu_user, q1.c.student_login == fu_user.user_login)\
         .join_from(q1, fu_subject, q1.c.psubject_code == fu_subject.subject_code)\
         .subquery()
-
-    q = select(q2.c.groupid, q2.c.student_login, fz_list_student.student_code, q2.c.term_id, fz_list_student.semester, 
-               fz_list_student.major_id, fz_list_student.campus_code, q2.c.val, q2.c.skill_code, q2.c.subject_code,
-               func.sum(q2.c.grade * q2.c.number_of_credit), func.sum(q2.c.number_of_credit))\
-        .join_from(fz_list_student, q2, and_(q2.c.fz_term == fz_list_student.term_id,
-                                             q2.c.user_code == fz_list_student.student_code))\
+    
+    q3 = select(fz_list_student.student_code,
+               fz_list_student.status, fz_list_student.semester,
+               fz_list_student.major_id, fz_list_student.campus_code,
+               fz_list_student.term_id
+               )\
         .where(
-               fz_list_student.semester < 3, 
+               fz_list_student.semester < 4, 
                fz_list_student.student_code.in_(
                    select(fz_list_student.student_code)\
                     .where(fz_list_student.major_id.in_([1, 3, 6, 12, 13, 14, 15, 16, 17,
                                                         28, 29, 30, 31, 32, 33, 34, 35, 
                                                         50, 51, 52, 53, 54, 71, 72]),
                             fz_list_student.campus_code == 'ph',
-                            fz_list_student.semester.in_([0, 1, 2]))\
+                            fz_list_student.semester.in_([0, 1, 2, 3]))\
                     .group_by(fz_list_student.student_code)\
-                    .having(func.max(fz_list_student.semester) == 2, func.count(distinct(fz_list_student.semester)) >= 2)
+                    .having(func.max(fz_list_student.semester) == 3, func.count(distinct(fz_list_student.semester)) >= 3)
                ),
                ~fz_list_student.student_code.in_(
                    select(fz_list_student.student_code).where(fz_list_student.campus_code != 'ph')
                ),
                ~fz_list_student.student_code.in_(
-                   select(fz_list_student.student_code).where(and_(fz_list_student.semester.in_([0, 1, 2]),
-                                                                   fz_list_student.status == 'THO'))
+                   select(fz_list_student.student_code).where(fz_list_student.semester.in_([0, 1, 2]),
+                                                              fz_list_student.status == 'THO')
                ),
                ~fz_list_student.student_code.in_(
                    select(fz_list_student.student_code).where(or_(fz_list_student.term_id < 26,
                                                                   fz_list_student.term_id == 54))
-               ), q2.c.val == 1)\
-        .group_by(fz_list_student.student_code, q2.c.skill_code, q2.c.subject_code, q2.c.groupid)
+               ))\
+        .subquery()
+
+    q = select(q2.c.groupid, q2.c.user_code, q2.c.skill_code, q2.c.val, q2.c.grade,
+               q2.c.number_of_credit, q3.c.semester)\
+        .join_from(q3, q2, and_(q2.c.fz_term == q3.c.term_id,
+                                q2.c.user_code == q3.c.student_code))\
+        .group_by(q2.c.user_code, q2.c.skill_code, q3.c.semester, q2.c.groupid)
     async with engine.connect() as conn:
         result = await conn.execute(q)
         res = result.all()
@@ -669,7 +649,99 @@ async def total_activity_prefix(engine, partitioner, mod_number):
         result = await conn.execute(q)
         res = result.all()
         return res
-
+    
+async def final_status(engine, partitioner, mod_number):
+    q1 = select(fz_list_student.student_code,
+               fz_list_student.status)\
+        .where(
+               fz_list_student.semester < 4, 
+               fz_list_student.student_code.in_(
+                   select(fz_list_student.student_code)\
+                    .where(fz_list_student.major_id.in_([1, 3, 6, 12, 13, 14, 15, 16, 17,
+                                                        28, 29, 30, 31, 32, 33, 34, 35, 
+                                                        50, 51, 52, 53, 54, 71, 72]),
+                            fz_list_student.campus_code == 'ph',
+                            fz_list_student.semester.in_([0, 1, 2, 3]))\
+                    .group_by(fz_list_student.student_code)\
+                    .having(func.max(fz_list_student.semester) == 3, func.count(distinct(fz_list_student.semester)) >= 3)
+               ),
+               ~fz_list_student.student_code.in_(
+                   select(fz_list_student.student_code).where(fz_list_student.campus_code != 'ph')
+               ),
+               ~fz_list_student.student_code.in_(
+                   select(fz_list_student.student_code).where(fz_list_student.semester.in_([0, 1, 2]),
+                                                              fz_list_student.status == 'THO')
+               ),
+               ~fz_list_student.student_code.in_(
+                   select(fz_list_student.student_code).where(or_(fz_list_student.term_id < 26,
+                                                                  fz_list_student.term_id == 54))
+               ),
+               fz_list_student.semester == 3,
+               tuple_(fz_list_student.student_code, fz_list_student.term_id).in_(
+                   select(fz_list_student.student_code, func.max(fz_list_student.term_id))\
+                   .where(
+                    fz_list_student.semester < 4,
+                    fz_list_student.student_code.in_(
+                        select(fz_list_student.student_code)\
+                            .where(fz_list_student.major_id.in_([1, 3, 6, 12, 13, 14, 15, 16, 17,
+                                                                28, 29, 30, 31, 32, 33, 34, 35, 
+                                                                50, 51, 52, 53, 54, 71, 72]),
+                                    fz_list_student.campus_code == 'ph',
+                                    fz_list_student.semester.in_([0, 1, 2, 3]))\
+                            .group_by(fz_list_student.student_code)\
+                            .having(func.max(fz_list_student.semester) == 3, func.count(distinct(fz_list_student.semester)) >= 3)
+                    ),
+                    ~fz_list_student.student_code.in_(
+                        select(fz_list_student.student_code).where(fz_list_student.campus_code != 'ph')
+                    ),
+                    ~fz_list_student.student_code.in_(
+                        select(fz_list_student.student_code).where(fz_list_student.semester.in_([0, 1, 2]),
+                                                                    fz_list_student.status == 'THO')
+                    ),
+                    ~fz_list_student.student_code.in_(
+                        select(fz_list_student.student_code).where(or_(fz_list_student.term_id < 26,
+                                                                        fz_list_student.term_id == 54))
+                    ),
+                    fz_list_student.semester == 3,
+                   ).group_by(fz_list_student.student_code)
+                )).subquery()
+    q2 = select(fz_list_student.student_code, func.count(fz_list_student.id).label('semester_3_count'))\
+        .where(
+            fz_list_student.semester < 4,
+                    fz_list_student.student_code.in_(
+                        select(fz_list_student.student_code)\
+                            .where(fz_list_student.major_id.in_([1, 3, 6, 12, 13, 14, 15, 16, 17,
+                                                                28, 29, 30, 31, 32, 33, 34, 35, 
+                                                                50, 51, 52, 53, 54, 71, 72]),
+                                    fz_list_student.campus_code == 'ph',
+                                    fz_list_student.semester.in_([0, 1, 2, 3]))\
+                            .group_by(fz_list_student.student_code)\
+                            .having(func.max(fz_list_student.semester) == 3, func.count(distinct(fz_list_student.semester)) >= 3)
+                    ),
+                    ~fz_list_student.student_code.in_(
+                        select(fz_list_student.student_code).where(fz_list_student.campus_code != 'ph')
+                    ),
+                    ~fz_list_student.student_code.in_(
+                        select(fz_list_student.student_code).where(fz_list_student.semester.in_([0, 1, 2]),
+                                                                    fz_list_student.status == 'THO')
+                    ),
+                    ~fz_list_student.student_code.in_(
+                        select(fz_list_student.student_code).where(or_(fz_list_student.term_id < 26,
+                                                                        fz_list_student.term_id == 54))
+                    ),
+                    fz_list_student.semester == 3,
+                   )\
+        .group_by(fz_list_student.student_code)\
+        .subquery()
+    
+    q = select(q1.c.student_code, q1.c.status, q2.c.semester_3_count)\
+        .join_from(q2, q1, q1.c.student_code == q2.c.student_code)\
+        
+    async with engine.connect() as conn:
+        result = await conn.execute(q)
+        res = result.all()
+        return res
+                
 async def insert_temp_table():
     PARTITIONER = 19
 
@@ -761,13 +833,13 @@ async def handle_attendance_percentage():
 
         merged_df = pd.merge(df_total_activity, df_total_attendance,
                              on=['pterm_id', 'user_code'], how='inner')
-        merged_df = pd.merge(merged_df, df_user_semester,
-                             on=['group_id', 'user_code'], how='inner')
+        # merged_df = pd.merge(merged_df, df_user_semester,
+        #                      on=['group_id', 'user_code'], how='inner')
 
         calculate_df = merged_df.groupby(['user_login', 'user_code']).agg({
             'total_att': 'sum',
             'total_act': 'sum',
-            'semester': 'max'
+            # 'semester': 'max'
         })
         calculate_df['percentage'] = calculate_df['total_att'] / calculate_df['total_act']
         calculate_df.reset_index(inplace=True)
@@ -779,7 +851,7 @@ async def handle_attendance_percentage_prefix():
     PARTITIONER = 19
 
     engine = create_async_engine(
-        "mysql+aiomysql://root@localhost/db_test", pool_size=10, max_overflow=20
+        "mysql+aiomysql://root@localhost/db_ap", pool_size=10, max_overflow=20
     )
 
     async with engine.begin() as connection:
@@ -807,40 +879,40 @@ async def handle_attendance_percentage_prefix():
                 dfs.append(df)
         df_total_attendance = pd.concat(dfs, ignore_index=True)
 
-        dfs = []
-        for index, mod_numbers in enumerate(batched(total_mod_numbers, n=20)):
-            m_data = [check_user_semester(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
-            data = await asyncio.gather(*m_data)
-            for item in data:
-                df = pd.DataFrame(item, columns=['group_id', 'user_login', 'user_code',
-                                                 'psubject_code', 'pterm_id', 'semester'])
-                dfs.append(df)
-        df_user_semester = pd.concat(dfs, ignore_index=True)
+        # dfs = []
+        # for index, mod_numbers in enumerate(batched(total_mod_numbers, n=20)):
+        #     m_data = [check_user_semester(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+        #     data = await asyncio.gather(*m_data)
+        #     for item in data:
+        #         df = pd.DataFrame(item, columns=['group_id', 'user_login', 'user_code',
+        #                                          'psubject_code', 'pterm_id', 'semester'])
+        #         dfs.append(df)
+        # df_user_semester = pd.concat(dfs, ignore_index=True)
 
         merged_df = pd.merge(df_total_attendance, df_total_activity,
                              on=['group_id'], how='inner')
-        merged_df = pd.merge(merged_df, df_user_semester,
-                             on=['group_id', 'user_code'], how='inner')
-        merged_df = merged_df[merged_df['user_login_x'] == merged_df['user_login_y']]
-        merged_df.drop(columns=['user_login_y'], inplace=True)
-        merged_df.rename(columns={'user_login_x': 'user_login'}, inplace=True)
-        merged_df['subject_code'] = merged_df['psubject_code'].apply(lambda x: x[:3])
+        # merged_df = pd.merge(merged_df, df_user_semester,
+        #                      on=['group_id', 'user_code'], how='inner')
+        # merged_df = merged_df[merged_df['user_login_x'] == merged_df['user_login_y']]
+        # merged_df.drop(columns=['user_login_y'], inplace=True)
+        # merged_df.rename(columns={'user_login_x': 'user_login'}, inplace=True)
+        # merged_df['subject_code'] = merged_df['psubject_code'].apply(lambda x: x[:3])
 
-        calculate_df = merged_df.groupby(['user_login', 'user_code', 'subject_code']).agg({
-            'total_att': 'sum',
-            'total_act': 'sum',
-            'semester': 'max'
-        })
-        calculate_df['percentage'] = (calculate_df['total_att'] / calculate_df['total_act']).round(2)
-        calculate_df.reset_index(inplace=True)
+        # calculate_df = merged_df.groupby(['user_login', 'user_code', 'subject_code']).agg({
+        #     'total_att': 'sum',
+        #     'total_act': 'sum',
+        #     'semester': 'max'
+        # })
+        # calculate_df['percentage'] = (calculate_df['total_att'] / calculate_df['total_act']).astype(float).round(2)
+        # calculate_df.reset_index(inplace=True)
 
     await engine.dispose()
-    return calculate_df
+    return merged_df
 
 async def main():
     PARTITIONER = 19
 
-    engine = create_async_engine('mysql+aiomysql://root@localhost/db_test', pool_size=10, max_overflow=20)
+    engine = create_async_engine('mysql+aiomysql://root@localhost/db_ap', pool_size=10, max_overflow=20)
 
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.create_all)
@@ -897,17 +969,28 @@ async def main():
     #     res = await asyncio.gather(*tasks)
     #     return res
 
+    # for index, mod_numbers in enumerate(batched(total_mod_numbers, n=1)):
+    #     tasks = [avg_grade_by_skill_code(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+    #     res = await asyncio.gather(*tasks)
+    #     return res
+    
+    for index, mod_numbers in enumerate(batched(total_mod_numbers, n=1)):
+        tasks = [final_status(engine, PARTITIONER, mod_number) for mod_number in mod_numbers]
+        res = await asyncio.gather(*tasks)
+        return res
+
     # Clean async engine       
     await engine.dispose()
     
 if __name__ == '__main__':
     start_time = time()
-    res = asyncio.run(handle_attendance_percentage_prefix())
-    res.to_csv('df.csv', sep=',', index=False, encoding='utf-8')
-    # with open('test.csv', 'w', newline='', encoding="utf-8") as csv_file:
-    #     csv_writer = csv.writer(csv_file)
-
-    #     process_data(res, csv_writer)
+    # res = asyncio.run(handle_attendance_percentage_prefix())
+    # res.to_csv('df.csv', sep=',', index=False, encoding='utf-8')
+    res = asyncio.run(main())
+    with open('test2.csv', 'w', newline='', encoding="utf-8") as csv_file:
+        csv_writer = csv.writer(csv_file)
+        csv_writer.writerow(["student_code", "status", "semester_3_count"])
+        process_data(res, csv_writer)
     print(f"Time taken: {time() - start_time}")
 
     """
